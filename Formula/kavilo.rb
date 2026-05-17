@@ -1,26 +1,26 @@
 class Kavilo < Formula
   desc "A lightweight personal AI assistant — single binary, zero dependencies"
   homepage "https://github.com/kavilo-bot/kavilo"
-  version "0.13.0"
+  version "0.14.0"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.13.0/kavilo_darwin_arm64.zip"
-      sha256 "3e7dcc4011342c769b7a866db9e09f820569fe8a4aa6a6c23099aa5a3b66a288"
+      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.14.0/kavilo_darwin_arm64.zip"
+      sha256 "ebaec2ce11a55efcacdd7d278dfca4aaacd6f6ab65ac9d63cc9160224169efb9"
     else
-      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.13.0/kavilo_darwin_amd64.zip"
-      sha256 "4fa9c76a499b48d2baf44f5efe47f3d25c04471dbbccc2ef95bc10e6df712c54"
+      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.14.0/kavilo_darwin_amd64.zip"
+      sha256 "122def8d3a48ddc3ed72ba1ed68a3500b8da196d80c48400f33cc8b53531dc8f"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.13.0/kavilo_linux_arm64.tar.gz"
-      sha256 "24c1121edd031beff79877630f98e204676f2df5efaa009a7209f26cfec6ff85"
+      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.14.0/kavilo_linux_arm64.tar.gz"
+      sha256 "a399c1da7f89670f301a5f91ec763b05a35e2f8becbb82d43d1bec156c5614dd"
     else
-      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.13.0/kavilo_linux_amd64.tar.gz"
-      sha256 "1feb8c9828a4fbd058711fdffb9bd12b309ea2bfc5014b95182403be00fca98c"
+      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/v0.14.0/kavilo_linux_amd64.tar.gz"
+      sha256 "fc1ad4ff99e5c13fa1eecdba5d3ab8418c0798d6da412bcefe10c9a0fd49410e"
     end
   end
 

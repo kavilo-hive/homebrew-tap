@@ -1,0 +1,21 @@
+Package: kavilo
+Architecture: amd64
+Version: 0.17.1
+Priority: optional
+Section: utils
+Maintainer: Kavilo Bot
+Installed-Size: 11841
+Depends: libc6 (>= 2.39)
+Filename: pool/main/k/kavilo/kavilo_0.17.1_amd64.deb
+Size: 3101632
+MD5sum: 371de7d089063a82bda7fb1de7277faa
+SHA1: 9faadc117749967cd5704f62b0224010c43dd3ce
+SHA256: 65530dfa4b6cfcbf3c0967dc505f413883dc175f3631eeb5730b5e23f094c178
+SHA512: 99cba61dd92f67b7aa569d424ccd174b7b36ca461c890699cd12857fb69d3dc2bc30b5d9919ce176e81bf7fb213e760b5343e90c5b26c22151dad7d785605723
+Homepage: https://github.com/kavilo-bot/kavilo
+Description: A lightweight personal AI assistant
+ kavilo is a single-binary personal AI assistant. It bundles a chat agent
+ runtime with built-in adapters for Telegram and Slack, plus MCP servers
+ (including Slack), cron, and a workspace-aware tool surface (filesystem,
+ shell, web search/fetch, subagent spawn).
+

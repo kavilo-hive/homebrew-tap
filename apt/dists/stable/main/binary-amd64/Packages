@@ -1,17 +1,17 @@
 Package: kavilo
 Architecture: amd64
-Version: 0.18.2
+Version: 0.18.3
 Priority: optional
 Section: utils
 Maintainer: Kavilo Bot
-Installed-Size: 11906
+Installed-Size: 11924
 Depends: libc6 (>= 2.39)
-Filename: pool/main/k/kavilo/kavilo_0.18.2_amd64.deb
-Size: 3116928
-MD5sum: 6ec2c35ec0b7eead52575b21e6e2a88f
-SHA1: 7545ac4c1d5dfe4e7a2f4a7272025b0136c96253
-SHA256: 95ec3aad895a8612e235b13fedca28909ed7801fa97978766723321d137e5559
-SHA512: d0e629f5f4cf937c27232f68ede963855e9b49446fea1a0e6b2195b4c0282536ec10e7f0be65dac27abedb644861d1b50d39fe007960d5fb09f2fcca5d4b94d2
+Filename: pool/main/k/kavilo/kavilo_0.18.3_amd64.deb
+Size: 3122684
+MD5sum: 35f2809a0722570ca6e7b776b802ffd2
+SHA1: 175362dc1cfabab6aa8b2c71af9e9555362a1ad4
+SHA256: c8e275c2728d5789ebb0a2fd486e249b28869ff2b8af9c0539b17ecad17705af
+SHA512: 5c4177fe73ce47e01bbd58049e94c87b75e83e61272898c89622c9d6c5357e22174a82d61bdd021511d478ef1fa1483a477d834487959685e23d592bbb8216f4
 Homepage: https://github.com/kavilo-bot/kavilo
 Description: A lightweight personal AI assistant
  kavilo is a single-binary personal AI assistant. It bundles a chat agent

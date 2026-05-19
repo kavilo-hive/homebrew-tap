@@ -1,15 +1,32 @@
+# kavilo-bot tap
+
+This is the **public Homebrew tap** and APT mirror for the kavilo-bot
+projects. Two products are published here:
+
+| Product | What it is | brew | apt |
+|---|---|---|---|
+| [`kavilo`](#kavilo) | A lightweight personal AI assistant — single binary, zero dependencies. | `brew install kavilo-bot/tap/kavilo` | `sudo apt install kavilo` |
+| [`kavilo-tunnel`](#kavilo-tunnel-client-cli) | A cloudflared-style HTTP tunneling client. Exposes a local service via a public URL through a hosted edge. | `brew install kavilo-bot/tap/kavilo-tunnel` | `sudo apt install kavilo-tunnel` |
+
+Both products' binaries, Homebrew formulas, and `.deb` packages are hosted in
+this repo. Client installs from this tap continue to work even when the
+upstream source repositories
+([`kavilo-bot/kavilo`](https://github.com/kavilo-bot/kavilo),
+[`kavilo-bot/kavilo-tunnel`](https://github.com/kavilo-bot/kavilo-tunnel))
+go private — everything end-users need is mirrored here under
+[Releases](https://github.com/kavilo-bot/homebrew-tap/releases) and the
+GitHub Pages-served [APT repo](https://kavilo-bot.github.io/homebrew-tap/apt).
+
+Most of this README is the long-form guide for **`kavilo`** (the AI
+assistant). For **`kavilo-tunnel`**, jump to
+[the section near the end](#kavilo-tunnel-client-cli) or read the full
+[user guide](https://github.com/kavilo-bot/kavilo-tunnel/blob/main/docs/user-guide.md).
+
+---
+
 # kavilo
 
 > A lightweight personal AI assistant — single binary, zero dependencies.
-
-This is the **public Homebrew tap** and binary mirror for
-[`kavilo`](https://github.com/kavilo-bot/kavilo). Use it to install
-`kavilo` on macOS / Linux, run it as a background service, and connect it
-to chat platforms.
-
-The `kavilo-bot/kavilo` source repository is currently private. All
-public release artifacts live here under
-[Releases](https://github.com/kavilo-bot/homebrew-tap/releases).
 
 ## Contents
 
@@ -25,6 +42,7 @@ public release artifacts live here under
 - [Uninstalling](#uninstalling)
 - [Troubleshooting](#troubleshooting)
 - [Security & sandbox notes](#security--sandbox-notes)
+- [kavilo-tunnel (client CLI)](#kavilo-tunnel-client-cli)
 - [License](#license)
 
 ## Install
@@ -490,6 +508,84 @@ env | grep -E '(KAVILO|API_KEY)'
   `printenv`.
 - Slack OAuth tokens live outside `config.json` under
   `~/.kavilo/mcp-auth/slack/` so backups of the config don't leak them.
+
+---
+
+# kavilo-tunnel (client CLI)
+
+`kavilo-tunnel` is the second product in this tap. It's an entirely separate
+binary from `kavilo` and serves a different purpose: expose a local HTTP
+service on the public internet via a kavilo-tunnel server (cloudflared/ngrok
+style).
+
+## Install
+
+### macOS / Linux (Homebrew)
+
+```bash
+brew install kavilo-bot/tap/kavilo-tunnel
+```
+
+macOS arm64 binary is **codesigned + Apple-notarized** (Developer ID:
+Weganar Consulting LLC, Team `F6ZKQU3V2S`) — no Gatekeeper warning on first
+run.
+
+### Debian / Ubuntu (apt)
+
+```bash
+sudo install -d /etc/apt/keyrings
+curl -fsSL https://kavilo-bot.github.io/homebrew-tap/apt/keyring.asc \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/kavilo.gpg
+
+echo "deb [signed-by=/etc/apt/keyrings/kavilo.gpg] https://kavilo-bot.github.io/homebrew-tap/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/kavilo.list
+
+sudo apt update
+sudo apt install kavilo-tunnel
+```
+
+The same apt repo serves `kavilo` and `kavilo-tunnel`; adding the source
+once gives you both.
+
+### Direct binary / .deb download
+
+Versioned assets attached to the `kavilo-tunnel-vX.Y.Z` tag in the
+[Releases](https://github.com/kavilo-bot/homebrew-tap/releases) page of
+this repo. The `.deb` is also reachable directly from the apt pool:
+`https://kavilo-bot.github.io/homebrew-tap/apt/pool/main/k/kavilo-tunnel/`.
+
+## Quick start
+
+```sh
+# 1. Get a token from your kavilo-tunnel operator and log in
+kavilo-tunnel login \
+  --token <your-token> \
+  --endpoint https://<your-base-host>:7777
+
+# 2. Run some local service
+python3 -m http.server 3000 &
+
+# 3. Open a named tunnel (stable URL across reconnects)
+kavilo-tunnel tunnel --url http://127.0.0.1:3000 --name myapp
+# → public URL: https://myapp-<your-slug>.<your-base-host>/
+```
+
+## Documentation
+
+See the full [user guide](https://github.com/kavilo-bot/kavilo-tunnel/blob/main/docs/user-guide.md)
+in the source repo for:
+
+- Detailed install paths (incl. building from source)
+- Login, named vs anonymous tunnels, `--takeover`
+- Running as a daemon (systemd / launchd)
+- Troubleshooting common errors
+- Full CLI reference
+
+For operators wanting to run the **server** side (`kavilo-tunneld`) or
+contribute, see the
+[`kavilo-bot/kavilo-tunnel` repo](https://github.com/kavilo-bot/kavilo-tunnel).
+
+---
 
 ## License
 

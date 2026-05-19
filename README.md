@@ -20,7 +20,7 @@ GitHub Pages-served [APT repo](https://kavilo-bot.github.io/homebrew-tap/apt).
 Most of this README is the long-form guide for **`kavilo`** (the AI
 assistant). For **`kavilo-tunnel`**, jump to
 [the section near the end](#kavilo-tunnel-client-cli) or read the full
-[user guide](https://github.com/kavilo-bot/kavilo-tunnel/blob/main/docs/user-guide.md).
+[user guide](docs/kavilo-tunnel/user-guide.md).
 
 ---
 
@@ -572,7 +572,7 @@ kavilo-tunnel tunnel --url http://127.0.0.1:3000 --name myapp
 
 ## Documentation
 
-See the full [user guide](https://github.com/kavilo-bot/kavilo-tunnel/blob/main/docs/user-guide.md)
+See the full [user guide](docs/kavilo-tunnel/user-guide.md)
 in the source repo for:
 
 - Detailed install paths (incl. building from source)

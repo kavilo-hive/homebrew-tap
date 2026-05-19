@@ -38,6 +38,26 @@ Description: kavilo-tunnel client CLI
  forwarding traffic through a persistent gRPC tunnel to a hosted edge.
  Pairs with kavilo-tunneld on the server side.
 
+Package: kavilo-tunnel
+Architecture: amd64
+Version: 0.1.2-1
+Priority: optional
+Section: net
+Maintainer: Kavilo Bot <kavilo-bot@users.noreply.github.com>
+Installed-Size: 6434
+Depends: libc6 (>= 2.34)
+Filename: pool/main/k/kavilo-tunnel/kavilo-tunnel_0.1.2_amd64.deb
+Size: 2143796
+MD5sum: 54b7579691e28629e40f197159a7f2bc
+SHA1: e9f199e5796b7e7cb0d77d769827690a3117e013
+SHA256: 65b7766ca4372afec3148a726a9305d736d916eb546757f68f6348e693051e28
+SHA512: 8c09db2766f501df6f62aab6844360de5ce243b51618c48d666dae0badfdffbf468d54d28720c7016ad46f0216ce29738917fca2dbbbc411482543d1d5eb8321
+Homepage: https://github.com/kavilo-bot/kavilo-tunnel
+Description: kavilo-tunnel client CLI
+ kavilo-tunnel exposes a local HTTP service on the public internet by
+ forwarding traffic through a persistent gRPC tunnel to a hosted edge.
+ Pairs with kavilo-tunneld on the server side.
+
 Package: kavilo
 Architecture: amd64
 Version: 0.19.0

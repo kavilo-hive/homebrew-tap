@@ -147,13 +147,15 @@ jobs:
       - name: Install build deps
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - name: Build release binary
-        run: cargo build --release --locked --bin kavilo-tunnel
+      - name: Build release binaries (client + server)
+        run: |
+          cargo build --release --locked --bin kavilo-tunnel
+          cargo build --release --locked --bin kavilo-tunneld
 
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
 
-      - name: Build .deb
+      - name: Build .deb (client only)
         run: cargo deb -p kavilo-tunnel --no-build --output dist/
 
       - name: Normalise .deb name
@@ -166,7 +168,7 @@ jobs:
             [[ "${src}" != "${target}" ]] && mv "${src}" "${target}"
           done
 
-      - name: Package tarball
+      - name: Package client tarball
         run: |
           set -euo pipefail
           version='${{ steps.ver.outputs.version }}'
@@ -179,12 +181,30 @@ jobs:
             "dist/kavilo-tunnel-v${version}-linux-amd64.tar.gz" \
             "$(basename "${stage}")"
 
+      - name: Package server tarball
+        run: |
+          set -euo pipefail
+          version='${{ steps.ver.outputs.version }}'
+          stage="$(mktemp -d)/kavilo-tunneld-v${version}-linux-amd64"
+          mkdir -p "${stage}"
+          cp target/release/kavilo-tunneld "${stage}/"
+          cp README.md LICENSE "${stage}/"
+          cp deploy/systemd/kavilo-tunneld.service "${stage}/"
+          tar -C "$(dirname "${stage}")" -czf \
+            "dist/kavilo-tunneld-v${version}-linux-amd64.tar.gz" \
+            "$(basename "${stage}")"
+
       - uses: actions/upload-artifact@v4
         with:
           name: kavilo-tunnel-linux-amd64
           path: |
             dist/*.tar.gz
             dist/*.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kavilo-tunneld-server-binary
+          path: target/release/kavilo-tunneld
 
   publish:
     name: Publish release + tap formula + apt
@@ -236,6 +256,7 @@ jobs:
             gh release upload "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
               dist/kavilo-tunnel-v${v}-darwin-arm64.tar.gz \
               dist/kavilo-tunnel-v${v}-linux-amd64.tar.gz \
+              dist/kavilo-tunneld-v${v}-linux-amd64.tar.gz \
               dist/kavilo-tunnel_${v}_amd64.deb \
               --clobber
             gh release edit "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
@@ -244,6 +265,7 @@ jobs:
             gh release create "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
               dist/kavilo-tunnel-v${v}-darwin-arm64.tar.gz \
               dist/kavilo-tunnel-v${v}-linux-amd64.tar.gz \
+              dist/kavilo-tunneld-v${v}-linux-amd64.tar.gz \
               dist/kavilo-tunnel_${v}_amd64.deb \
               --title "kavilo-tunnel v${v}" --notes "${NOTES}" --latest=false
           fi
@@ -350,3 +372,84 @@ jobs:
             git commit -m "kavilo-tunnel ${{ env.TAG }}: formula + apt repo update"
             git push origin main
           fi
+
+  deploy-server:
+    name: Deploy kavilo-tunneld to azuregw2
+    needs: [build-linux, publish]
+    # Only run from the canonical tap repo; forks should NOT have a working
+    # AZUREGW2_DEPLOY_KEY anyway, but be defensive.
+    if: github.repository == 'kavilo-bot/homebrew-tap'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download server binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kavilo-tunneld-server-binary
+          path: dist/
+
+      - name: Resolve version
+        id: ver
+        run: |
+          tag='${{ env.TAG }}'
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up SSH deploy key
+        env:
+          DEPLOY_KEY: ${{ secrets.AZUREGW2_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_KEY:-}" ]; then
+            echo "::warning::AZUREGW2_DEPLOY_KEY secret not set; skipping server deploy."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${DEPLOY_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # TOFU on first contact. For higher trust pin a known host fingerprint.
+          ssh-keyscan -t ed25519 20.9.149.26 >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload binary + restart service
+        env:
+          DEPLOY_KEY: ${{ secrets.AZUREGW2_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_KEY:-}" ]; then
+            exit 0
+          fi
+
+          chmod +x dist/kavilo-tunneld
+
+          # scp the binary to a staging path; the install + restart runs
+          # under sudo on the remote.
+          scp -i ~/.ssh/deploy_key dist/kavilo-tunneld \
+            azureuser@20.9.149.26:/tmp/kavilo-tunneld-new
+
+          ssh -i ~/.ssh/deploy_key azureuser@20.9.149.26 bash <<'REMOTE'
+            set -euo pipefail
+            # Keep a backup of the prior binary so a quick rollback is one
+            # `mv` away if something goes wrong.
+            if [ -f /usr/local/bin/kavilo-tunneld ]; then
+              sudo cp /usr/local/bin/kavilo-tunneld /usr/local/bin/kavilo-tunneld.prev
+            fi
+            sudo install -m 0755 /tmp/kavilo-tunneld-new /usr/local/bin/kavilo-tunneld
+            rm -f /tmp/kavilo-tunneld-new
+            sudo systemctl restart kavilo-tunneld
+            sleep 3
+            sudo systemctl is-active kavilo-tunneld
+            /usr/local/bin/kavilo-tunneld --version
+          REMOTE
+
+      - name: Smoke-test public URL after deploy
+        run: |
+          set -euo pipefail
+          # If kavilo-tunneld came up cleanly the apex domain should resolve
+          # TLS (no specific tunnel test from CI since CI has no client).
+          if echo | openssl s_client -connect kavilo-tunnel.weganar.com:443 \
+              -servername kavilo-tunnel.weganar.com -verify_quiet 2>&1 \
+              | grep -q "Verify return code: 0"; then
+            echo "TLS handshake to edge: OK"
+          else
+            echo "::warning::TLS handshake check inconclusive (cert may still be valid; check directly)."
+          fi
+

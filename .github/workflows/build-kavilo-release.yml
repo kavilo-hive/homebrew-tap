@@ -1,0 +1,353 @@
+name: Build kavilo release
+
+# Runs in this public repo so Actions minutes are unlimited and free.
+# Pulls kavilo source from the private repo at the dispatched tag and
+# runs kavilo's own release scripts to build, sign, notarize, and publish.
+#
+# Triggers:
+#   - repository_dispatch (event_type: kavilo-release; payload.tag = vX.Y.Z)
+#     fired by kavilo/.github/workflows/dispatch-release.yml on tag push
+#   - workflow_dispatch with `tag` input — manual re-release
+
+on:
+  repository_dispatch:
+    types: [kavilo-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "kavilo tag to build (e.g. v0.19.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  TAG: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.os_label }}/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os_label: linux
+            arch: amd64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            ext: tar.gz
+          - os_label: linux
+            arch: arm64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            ext: tar.gz
+          - os_label: linux-musl
+            arch: amd64
+            target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            ext: tar.gz
+          - os_label: darwin
+            arch: amd64
+            target: x86_64-apple-darwin
+            runner: macos-14
+            ext: zip
+          - os_label: darwin
+            arch: arm64
+            target: aarch64-apple-darwin
+            runner: macos-14
+            ext: zip
+          - os_label: windows
+            arch: amd64
+            target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            ext: zip
+    steps:
+      - name: Checkout kavilo source at tag
+        uses: actions/checkout@v4
+        with:
+          repository: kavilo-bot/kavilo
+          ref: ${{ env.TAG }}
+          token: ${{ secrets.KAVILO_PRIVATE_READ_TOKEN }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          tag='${{ env.TAG }}'
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross compilation toolchain (linux-aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: kavilo-release-${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }} -p kavilo-cli
+
+      - name: Sign and notarize (macOS)
+        if: startsWith(matrix.target, 'x86_64-apple') || startsWith(matrix.target, 'aarch64-apple')
+        env:
+          APPLE_DEVELOPER_ID_CERT_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINARY="target/${{ matrix.target }}/release/kavilo"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/kavilo-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          P12_PATH="${RUNNER_TEMP}/cert.p12"
+          echo "${APPLE_DEVELOPER_ID_CERT_P12_BASE64}" | base64 --decode > "${P12_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${P12_PATH}" \
+            -P "${APPLE_DEVELOPER_ID_CERT_PASSWORD}" \
+            -A -t cert -f pkcs12 -k "${KEYCHAIN_PATH}"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}" >/dev/null
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" \
+            $(security list-keychains -d user | sed 's/"//g')
+          KAVILO_SIGNING_IDENTITY="${APPLE_DEVELOPER_ID_IDENTITY}" \
+            scripts/macos/sign.sh "${BINARY}"
+          scripts/macos/notarize.sh "${BINARY}"
+          security delete-keychain "${KEYCHAIN_PATH}" || true
+          rm -f "${P12_PATH}"
+
+      - name: Stage archive (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version='${{ steps.ver.outputs.version }}'
+          name="kavilo_${version}_${{ matrix.os_label }}_${{ matrix.arch }}"
+          stage="$(mktemp -d)/${name}"
+          mkdir -p "${stage}"
+          cp "target/${{ matrix.target }}/release/kavilo" "${stage}/kavilo"
+          cp README.md LICENSE "${stage}/"
+          mkdir -p dist
+          if [[ '${{ matrix.ext }}' == 'tar.gz' ]]; then
+            tar -czf "dist/${name}.tar.gz" -C "$(dirname "${stage}")" "${name}"
+          else
+            ( cd "$(dirname "${stage}")" && /usr/bin/zip -q -r "${OLDPWD}/dist/${name}.zip" "${name}" )
+          fi
+
+      - name: Stage archive (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = '${{ steps.ver.outputs.version }}'
+          $name = "kavilo_${version}_windows_amd64"
+          $stage = Join-Path ([System.IO.Path]::GetTempPath()) $name
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/kavilo.exe" (Join-Path $stage "kavilo.exe")
+          Copy-Item README.md (Join-Path $stage "README.md")
+          Copy-Item LICENSE (Join-Path $stage "LICENSE")
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath "dist/${name}.zip"
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: kavilo-${{ matrix.os_label }}-${{ matrix.arch }}
+          path: dist/
+
+  deb:
+    name: Debian package (${{ matrix.arch }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - name: Checkout kavilo source at tag
+        uses: actions/checkout@v4
+        with:
+          repository: kavilo-bot/kavilo
+          ref: ${{ env.TAG }}
+          token: ${{ secrets.KAVILO_PRIVATE_READ_TOKEN }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        run: |
+          tag='${{ env.TAG }}'
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross compilation toolchain (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: kavilo-deb-${{ matrix.arch }}
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked --version 3.4.0
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }} -p kavilo-cli
+
+      - name: Build .deb
+        run: |
+          cargo deb -p kavilo-cli --no-build --target ${{ matrix.target }} \
+            --deb-version '${{ steps.ver.outputs.version }}' \
+            --output dist/
+
+      - name: Normalise .deb name
+        run: |
+          set -euo pipefail
+          version='${{ steps.ver.outputs.version }}'
+          shopt -s nullglob
+          for src in dist/kavilo*.deb; do
+            target="dist/kavilo_${version}_${{ matrix.arch }}.deb"
+            [[ "${src}" != "${target}" ]] && mv "${src}" "${target}"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kavilo-deb-${{ matrix.arch }}
+          path: dist/*.deb
+
+  publish:
+    name: Publish release + tap + apt
+    needs: [build, deb]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tap (this repo, write access)
+        uses: actions/checkout@v4
+        with:
+          path: homebrew-tap
+          fetch-depth: 0
+
+      - name: Checkout kavilo source at tag (for scripts/release/* helpers)
+        uses: actions/checkout@v4
+        with:
+          repository: kavilo-bot/kavilo
+          ref: ${{ env.TAG }}
+          token: ${{ secrets.KAVILO_PRIVATE_READ_TOKEN }}
+          path: kavilo
+          fetch-depth: 0
+
+      - name: Download all archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kavilo-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          shasum -a 256 kavilo_*.tar.gz kavilo_*.zip kavilo_*.deb > checksums.txt
+          cat checksums.txt
+
+      - name: Render Homebrew formula
+        working-directory: kavilo
+        env:
+          DIST_DIR: ${{ github.workspace }}/dist
+        run: |
+          mkdir -p '${{ github.workspace }}/dist/homebrew'
+          bash scripts/release/render-homebrew-formula.sh \
+            '${{ env.TAG }}' \
+            'kavilo-bot/kavilo' \
+            > '${{ github.workspace }}/dist/homebrew/kavilo.rb'
+
+      - name: Render release notes
+        working-directory: kavilo
+        run: |
+          bash scripts/release/render-release-notes.sh '${{ env.TAG }}' \
+            > '${{ github.workspace }}/dist/CHANGELOG.md'
+
+      - name: Install APT repo tooling
+        run: sudo apt-get update && sudo apt-get install -y apt-utils gnupg
+
+      - name: Publish GitHub release on the tap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Use a kavilo-vX.Y.Z tag for namespacing within the tap.
+          REL_TAG="kavilo-${{ env.TAG }}"
+          if gh release view "${REL_TAG}" --repo kavilo-bot/homebrew-tap >/dev/null 2>&1; then
+            gh release upload "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
+              dist/checksums.txt \
+              dist/kavilo_*.tar.gz dist/kavilo_*.zip dist/kavilo_*.deb \
+              --clobber
+            gh release edit "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
+              --title "kavilo ${{ env.TAG }}" \
+              --notes-file dist/CHANGELOG.md \
+              --latest=true
+          else
+            gh release create "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
+              dist/checksums.txt \
+              dist/kavilo_*.tar.gz dist/kavilo_*.zip dist/kavilo_*.deb \
+              --title "kavilo ${{ env.TAG }}" \
+              --notes-file dist/CHANGELOG.md \
+              --latest=true
+          fi
+
+      - name: Update tap Formula/kavilo.rb (publish-homebrew-tap.sh, in-place)
+        working-directory: kavilo
+        env:
+          RELEASE_TAG: ${{ env.TAG }}
+          SOURCE_REPO: kavilo-bot/kavilo
+          TAP_REPO: kavilo-bot/homebrew-tap
+          TAP_DIR: ${{ github.workspace }}/homebrew-tap
+          DIST_DIR: ${{ github.workspace }}/dist
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/release/publish-homebrew-tap.sh
+
+      - name: Update APT repo
+        working-directory: kavilo
+        env:
+          RELEASE_TAG: ${{ env.TAG }}
+          TAP_REPO: kavilo-bot/homebrew-tap
+          TAP_DIR: ${{ github.workspace }}/homebrew-tap
+          DIST_DIR: ${{ github.workspace }}/dist
+          APT_REPO_GPG_PRIVATE_KEY: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY }}
+          APT_REPO_GPG_PASSPHRASE: ${{ secrets.APT_REPO_GPG_PASSPHRASE }}
+        run: bash scripts/release/publish-apt-repo.sh

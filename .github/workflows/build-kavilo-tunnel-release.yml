@@ -1,0 +1,352 @@
+name: Build kavilo-tunnel release
+
+# Runs in this public tap (free Actions minutes). Pulls private
+# kavilo-tunnel source at the dispatched tag, builds + signs +
+# notarizes + publishes to this repo's releases + apt repo.
+#
+# Triggers:
+#   - repository_dispatch (event_type: kavilo-tunnel-release;
+#     payload.tag = vX.Y.Z) fired by kavilo-tunnel/.github/workflows/
+#     dispatch-release.yml on tag push
+#   - workflow_dispatch with `tag` input — manual re-release
+
+on:
+  repository_dispatch:
+    types: [kavilo-tunnel-release]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "kavilo-tunnel tag to build (e.g. v0.1.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
+
+jobs:
+  build-darwin:
+    name: Build + sign macOS arm64
+    runs-on: macos-14
+    steps:
+      - name: Checkout kavilo-tunnel source at tag
+        uses: actions/checkout@v4
+        with:
+          repository: kavilo-bot/kavilo-tunnel
+          ref: ${{ env.TAG }}
+          token: ${{ secrets.KAVILO_PRIVATE_READ_TOKEN }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          tag='${{ env.TAG }}'
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kavilo-tunnel-darwin-arm64
+
+      - name: Install protoc
+        run: brew install protobuf
+
+      - name: Build release binary
+        run: cargo build --release --locked --bin kavilo-tunnel
+
+      - name: Sign + notarize
+        env:
+          APPLE_DEVELOPER_ID_CERT_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_DEVELOPER_ID_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BINARY="target/release/kavilo-tunnel"
+
+          KEYCHAIN_PATH="${RUNNER_TEMP}/kt-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          P12_PATH="${RUNNER_TEMP}/cert.p12"
+          echo "${APPLE_DEVELOPER_ID_CERT_P12_BASE64}" | base64 --decode > "${P12_PATH}"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${P12_PATH}" \
+            -P "${APPLE_DEVELOPER_ID_CERT_PASSWORD}" \
+            -A -t cert -f pkcs12 -k "${KEYCHAIN_PATH}"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}" >/dev/null
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" \
+            $(security list-keychains -d user | sed 's/"//g')
+
+          # Codesign with hardened runtime + secure timestamp
+          codesign --force --options runtime --timestamp \
+            --sign "${APPLE_DEVELOPER_ID_IDENTITY}" \
+            --keychain "${KEYCHAIN_PATH}" \
+            "${BINARY}"
+          codesign --verify --verbose "${BINARY}"
+
+          # Notarize
+          ditto -c -k --keepParent "${BINARY}" "${RUNNER_TEMP}/notarize.zip"
+          xcrun notarytool submit "${RUNNER_TEMP}/notarize.zip" \
+            --apple-id "${APPLE_ID}" \
+            --team-id "${APPLE_TEAM_ID}" \
+            --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
+            --wait
+
+          # Tear down
+          security delete-keychain "${KEYCHAIN_PATH}" || true
+          rm -f "${P12_PATH}" "${RUNNER_TEMP}/notarize.zip"
+
+      - name: Package tarball
+        run: |
+          set -euo pipefail
+          version='${{ steps.ver.outputs.version }}'
+          stage="$(mktemp -d)/kavilo-tunnel-v${version}-darwin-arm64"
+          mkdir -p "${stage}"
+          cp target/release/kavilo-tunnel "${stage}/"
+          cp docs/user-guide.md "${stage}/USER-GUIDE.md"
+          cp README.md LICENSE "${stage}/"
+          mkdir -p dist
+          tar -C "$(dirname "${stage}")" -czf \
+            "dist/kavilo-tunnel-v${version}-darwin-arm64.tar.gz" \
+            "$(basename "${stage}")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kavilo-tunnel-darwin-arm64
+          path: dist/*.tar.gz
+
+  build-linux:
+    name: Build Linux amd64 + .deb
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kavilo-tunnel source at tag
+        uses: actions/checkout@v4
+        with:
+          repository: kavilo-bot/kavilo-tunnel
+          ref: ${{ env.TAG }}
+          token: ${{ secrets.KAVILO_PRIVATE_READ_TOKEN }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          tag='${{ env.TAG }}'
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kavilo-tunnel-linux-amd64
+
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Build release binary
+        run: cargo build --release --locked --bin kavilo-tunnel
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build .deb
+        run: cargo deb -p kavilo-tunnel --no-build --output dist/
+
+      - name: Normalise .deb name
+        run: |
+          set -euo pipefail
+          version='${{ steps.ver.outputs.version }}'
+          shopt -s nullglob
+          for src in dist/kavilo-tunnel*.deb; do
+            target="dist/kavilo-tunnel_${version}_amd64.deb"
+            [[ "${src}" != "${target}" ]] && mv "${src}" "${target}"
+          done
+
+      - name: Package tarball
+        run: |
+          set -euo pipefail
+          version='${{ steps.ver.outputs.version }}'
+          stage="$(mktemp -d)/kavilo-tunnel-v${version}-linux-amd64"
+          mkdir -p "${stage}"
+          cp target/release/kavilo-tunnel "${stage}/"
+          cp docs/user-guide.md "${stage}/USER-GUIDE.md"
+          cp README.md LICENSE "${stage}/"
+          tar -C "$(dirname "${stage}")" -czf \
+            "dist/kavilo-tunnel-v${version}-linux-amd64.tar.gz" \
+            "$(basename "${stage}")"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kavilo-tunnel-linux-amd64
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+
+  publish:
+    name: Publish release + tap formula + apt
+    needs: [build-darwin, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tap (this repo, write)
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kavilo-tunnel-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Resolve version
+        id: ver
+        run: |
+          tag='${{ env.TAG }}'
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute sha256s for formula
+        id: sha
+        run: |
+          set -euo pipefail
+          v='${{ steps.ver.outputs.version }}'
+          echo "darwin_arm64=$(sha256sum dist/kavilo-tunnel-v${v}-darwin-arm64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux_amd64=$(sha256sum dist/kavilo-tunnel-v${v}-linux-amd64.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release on tap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          v='${{ steps.ver.outputs.version }}'
+          REL_TAG="kavilo-tunnel-v${v}"
+          NOTES="Automated kavilo-tunnel v${v} build.
+
+          macOS arm64 binary is codesigned + Apple-notarized.
+
+          ## Install
+          \`\`\`
+          brew install kavilo-bot/tap/kavilo-tunnel
+          sudo apt install kavilo-tunnel   # after adding the apt source
+          \`\`\`"
+          if gh release view "${REL_TAG}" --repo kavilo-bot/homebrew-tap >/dev/null 2>&1; then
+            gh release upload "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
+              dist/kavilo-tunnel-v${v}-darwin-arm64.tar.gz \
+              dist/kavilo-tunnel-v${v}-linux-amd64.tar.gz \
+              dist/kavilo-tunnel_${v}_amd64.deb \
+              --clobber
+            gh release edit "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
+              --title "kavilo-tunnel v${v}" --notes "${NOTES}" --latest=false
+          else
+            gh release create "${REL_TAG}" --repo kavilo-bot/homebrew-tap \
+              dist/kavilo-tunnel-v${v}-darwin-arm64.tar.gz \
+              dist/kavilo-tunnel-v${v}-linux-amd64.tar.gz \
+              dist/kavilo-tunnel_${v}_amd64.deb \
+              --title "kavilo-tunnel v${v}" --notes "${NOTES}" --latest=false
+          fi
+
+      - name: Update Formula/kavilo-tunnel.rb
+        run: |
+          set -euo pipefail
+          v='${{ steps.ver.outputs.version }}'
+          cat > Formula/kavilo-tunnel.rb <<EOF
+          class KaviloTunnel < Formula
+            desc "Expose a local HTTP service on the public internet via a kavilo tunnel"
+            homepage "https://kavilo-bot.github.io/homebrew-tap/"
+            version "${v}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v${v}/kavilo-tunnel-v${v}-darwin-arm64.tar.gz"
+                sha256 "${{ steps.sha.outputs.darwin_arm64 }}"
+              else
+                odie "Intel macOS build is not published in v${v}."
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.intel?
+                url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v${v}/kavilo-tunnel-v${v}-linux-amd64.tar.gz"
+                sha256 "${{ steps.sha.outputs.linux_amd64 }}"
+              else
+                odie "Linux arm64 build is not published in v${v}."
+              end
+            end
+
+            def install
+              bin.install "kavilo-tunnel"
+              doc.install "README.md", "USER-GUIDE.md"
+            end
+
+            def caveats
+              <<~CAVEATS
+                First-time setup:
+                  kavilo-tunnel login --token <your-token> --endpoint https://<base-host>:7777
+
+                Open a tunnel:
+                  kavilo-tunnel tunnel --url http://127.0.0.1:3000 --name myapp
+              CAVEATS
+            end
+
+            test do
+              assert_match "kavilo-tunnel ${v}", shell_output("#{bin}/kavilo-tunnel --version")
+            end
+          end
+          EOF
+
+      - name: Add .deb to apt pool + regen + sign
+        env:
+          APT_REPO_GPG_PRIVATE_KEY: ${{ secrets.APT_REPO_GPG_PRIVATE_KEY }}
+          APT_REPO_GPG_PASSPHRASE: ${{ secrets.APT_REPO_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt-utils gnupg
+
+          v='${{ steps.ver.outputs.version }}'
+          mkdir -p apt/pool/main/k/kavilo-tunnel
+          cp "dist/kavilo-tunnel_${v}_amd64.deb" apt/pool/main/k/kavilo-tunnel/
+
+          cd apt
+          apt-ftparchive --arch amd64 packages pool/main > dists/stable/main/binary-amd64/Packages
+          gzip -9kf dists/stable/main/binary-amd64/Packages
+          apt-ftparchive --arch arm64 packages pool/main > dists/stable/main/binary-arm64/Packages
+          gzip -9kf dists/stable/main/binary-arm64/Packages
+
+          cat > /tmp/release.conf <<EOF
+          APT::FTPArchive::Release::Origin "kavilo";
+          APT::FTPArchive::Release::Label "kavilo";
+          APT::FTPArchive::Release::Suite "stable";
+          APT::FTPArchive::Release::Codename "stable";
+          APT::FTPArchive::Release::Architectures "amd64 arm64";
+          APT::FTPArchive::Release::Components "main";
+          APT::FTPArchive::Release::Description "kavilo apt repository";
+          EOF
+          apt-ftparchive -c /tmp/release.conf release dists/stable > dists/stable/Release
+
+          cd ..
+          export GNUPGHOME=$(mktemp -d) && chmod 700 "$GNUPGHOME"
+          echo "$APT_REPO_GPG_PRIVATE_KEY" \
+            | gpg --batch --pinentry-mode loopback --passphrase "$APT_REPO_GPG_PASSPHRASE" --import
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '$1=="fpr"{print $10; exit}')
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$APT_REPO_GPG_PASSPHRASE" \
+            --default-key "$KEYID" -abs -o apt/dists/stable/Release.gpg apt/dists/stable/Release
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$APT_REPO_GPG_PASSPHRASE" \
+            --default-key "$KEYID" --clearsign -o apt/dists/stable/InRelease apt/dists/stable/Release
+
+      - name: Commit + push tap updates
+        run: |
+          set -euo pipefail
+          git config user.name "kavilo-bot"
+          git config user.email "kavilo-bot@users.noreply.github.com"
+          git add Formula/kavilo-tunnel.rb apt/
+          if git diff --cached --quiet; then
+            echo "No tap changes."
+          else
+            git commit -m "kavilo-tunnel ${{ env.TAG }}: formula + apt repo update"
+            git push origin main
+          fi

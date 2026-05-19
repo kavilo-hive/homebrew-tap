@@ -393,42 +393,36 @@ jobs:
           tag='${{ env.TAG }}'
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Set up SSH deploy key
+      - name: Deploy server binary
         env:
           DEPLOY_KEY: ${{ secrets.AZUREGW2_DEPLOY_KEY }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           if [ -z "${DEPLOY_KEY:-}" ]; then
             echo "::warning::AZUREGW2_DEPLOY_KEY secret not set; skipping server deploy."
             exit 0
           fi
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          printf '%s\n' "${DEPLOY_KEY}" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # TOFU on first contact. For higher trust pin a known host fingerprint.
-          ssh-keyscan -t ed25519 20.9.149.26 >> ~/.ssh/known_hosts 2>/dev/null
-
-      - name: Upload binary + restart service
-        env:
-          DEPLOY_KEY: ${{ secrets.AZUREGW2_DEPLOY_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${DEPLOY_KEY:-}" ]; then
-            exit 0
-          fi
 
           chmod +x dist/kavilo-tunneld
 
-          # scp the binary to a staging path; the install + restart runs
-          # under sudo on the remote.
-          scp -i ~/.ssh/deploy_key dist/kavilo-tunneld \
+          SSH_OPTS=(-i ~/.ssh/deploy_key \
+                    -o StrictHostKeyChecking=accept-new \
+                    -o UserKnownHostsFile=/tmp/known_hosts \
+                    -o BatchMode=yes \
+                    -o ConnectTimeout=10)
+
+          echo "--- scp binary to azuregw2 ---"
+          scp "${SSH_OPTS[@]}" dist/kavilo-tunneld \
             azureuser@20.9.149.26:/tmp/kavilo-tunneld-new
 
-          ssh -i ~/.ssh/deploy_key azureuser@20.9.149.26 bash <<'REMOTE'
+          echo "--- install + restart on azuregw2 ---"
+          ssh "${SSH_OPTS[@]}" azureuser@20.9.149.26 bash <<'REMOTE'
             set -euo pipefail
-            # Keep a backup of the prior binary so a quick rollback is one
-            # `mv` away if something goes wrong.
+            # Keep a backup so quick rollback is one `mv` away.
             if [ -f /usr/local/bin/kavilo-tunneld ]; then
               sudo cp /usr/local/bin/kavilo-tunneld /usr/local/bin/kavilo-tunneld.prev
             fi

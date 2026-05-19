@@ -1,0 +1,67 @@
+name: Mirror kavilo-tunnel docs
+
+# Public Actions: unlimited free minutes on a public repo. Pull the
+# canonical user-facing docs from the (private) kavilo-tunnel source repo
+# and commit them into docs/kavilo-tunnel/ here so anonymous viewers can
+# follow links from this README.
+
+on:
+  schedule:
+    # Every 15 minutes. Most runs are no-ops (~10s); only commits on
+    # actual upstream doc changes.
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mirror-kavilo-tunnel-docs
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tap (this repo, default token)
+        uses: actions/checkout@v4
+        with:
+          path: tap
+
+      - name: Checkout kavilo-tunnel (private; needs PAT)
+        uses: actions/checkout@v4
+        with:
+          repository: kavilo-bot/kavilo-tunnel
+          path: kavilo-tunnel
+          token: ${{ secrets.KAVILO_TUNNEL_READ_TOKEN }}
+          ref: main
+
+      - name: Sync .md files
+        run: |
+          set -euo pipefail
+          mkdir -p tap/docs/kavilo-tunnel
+          rsync -av --delete \
+            --include='*.md' --exclude='*' \
+            kavilo-tunnel/docs/ \
+            tap/docs/kavilo-tunnel/
+
+      - name: Commit + push if anything changed
+        working-directory: tap
+        env:
+          UPSTREAM_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "kavilo-bot"
+          git config user.email "kavilo-bot@users.noreply.github.com"
+
+          git add docs/kavilo-tunnel
+          if git diff --cached --quiet; then
+            echo "No doc changes upstream. No-op."
+            exit 0
+          fi
+
+          UPSTREAM=$(cd ../kavilo-tunnel && git rev-parse --short HEAD)
+          echo "Upstream commit: $UPSTREAM"
+          git status --short
+          git commit -m "Sync kavilo-tunnel docs (upstream ${UPSTREAM})"
+          git push origin main

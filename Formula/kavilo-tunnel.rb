@@ -7,7 +7,7 @@ class KaviloTunnel < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v0.1.2/kavilo-tunnel-v0.1.2-darwin-arm64.tar.gz"
-      sha256 "fcdf89c0d5faaa35a4a90506b1fe67bbb504fa10cd4223eaeb4ca5b031d84160"
+      sha256 "34bc5261574a145916159cc87f059940064e5c0d8b46022c9d759389341abdb2"
     else
       odie "Intel macOS build is not published in v0.1.2."
     end
@@ -16,7 +16,7 @@ class KaviloTunnel < Formula
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v0.1.2/kavilo-tunnel-v0.1.2-linux-amd64.tar.gz"
-      sha256 "87dd835abb45e43a4b7e3b0fea744d1ace9c38223f53beb3204af0bd210670b7"
+      sha256 "2a0090b843c1da400f9f4b4b916c881b2a955eade65bd7b53006b7ed1137e822"
     else
       odie "Linux arm64 build is not published in v0.1.2."
     end

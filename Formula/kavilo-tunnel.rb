@@ -1,24 +1,24 @@
 class KaviloTunnel < Formula
   desc "Expose a local HTTP service on the public internet via a kavilo tunnel"
   homepage "https://kavilo-bot.github.io/homebrew-tap/"
-  version "0.1.2"
+  version "0.1.3"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v0.1.2/kavilo-tunnel-v0.1.2-darwin-arm64.tar.gz"
-      sha256 "c2722f8d6b6f3489cc42955c3d6296da0335abef87d77a082d425be9b27efcdb"
+      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v0.1.3/kavilo-tunnel-v0.1.3-darwin-arm64.tar.gz"
+      sha256 "e7c3a455538dde48cce7e40e9a27e97d2ecf22d771442b2d04f74059c3d578c6"
     else
-      odie "Intel macOS build is not published in v0.1.2."
+      odie "Intel macOS build is not published in v0.1.3."
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
-      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v0.1.2/kavilo-tunnel-v0.1.2-linux-amd64.tar.gz"
-      sha256 "86d35415dfe68860659f959e5a770c5409e3bdcd9530678d45e70f4bfc325396"
+      url "https://github.com/kavilo-bot/homebrew-tap/releases/download/kavilo-tunnel-v0.1.3/kavilo-tunnel-v0.1.3-linux-amd64.tar.gz"
+      sha256 "45c7f0f6fd028a0135336c528e8f66249439fd30ac0458b7497c02f244ee8c43"
     else
-      odie "Linux arm64 build is not published in v0.1.2."
+      odie "Linux arm64 build is not published in v0.1.3."
     end
   end
 
@@ -38,6 +38,6 @@ class KaviloTunnel < Formula
   end
 
   test do
-    assert_match "kavilo-tunnel 0.1.2", shell_output("#{bin}/kavilo-tunnel --version")
+    assert_match "kavilo-tunnel 0.1.3", shell_output("#{bin}/kavilo-tunnel --version")
   end
 end

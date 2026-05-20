@@ -47,11 +47,11 @@ Maintainer: Kavilo Bot <kavilo-bot@users.noreply.github.com>
 Installed-Size: 6434
 Depends: libc6 (>= 2.34)
 Filename: pool/main/k/kavilo-tunnel/kavilo-tunnel_0.1.2_amd64.deb
-Size: 2143796
-MD5sum: 54b7579691e28629e40f197159a7f2bc
-SHA1: e9f199e5796b7e7cb0d77d769827690a3117e013
-SHA256: 65b7766ca4372afec3148a726a9305d736d916eb546757f68f6348e693051e28
-SHA512: 8c09db2766f501df6f62aab6844360de5ce243b51618c48d666dae0badfdffbf468d54d28720c7016ad46f0216ce29738917fca2dbbbc411482543d1d5eb8321
+Size: 2143688
+MD5sum: e229abbe418f565d0f1f5a3dc542ab2d
+SHA1: a2e8bfef8ac8391422328cfec2ce350034a81e15
+SHA256: 2e220688c5c6bc75b3195e75d0b308b16485c2fe9565bdf64d22053eccc210c4
+SHA512: 2d9e450af5dc305ba374024113a04eeea234ce1a5151795006691d833696e956ac8f253ba4220f76c53d9b341c8a97eb685f44760e83cb6308a32817ba4b7bc3
 Homepage: https://github.com/kavilo-bot/kavilo-tunnel
 Description: kavilo-tunnel client CLI
  kavilo-tunnel exposes a local HTTP service on the public internet by

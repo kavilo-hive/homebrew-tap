@@ -76,12 +76,19 @@ Save it and the server endpoint with `login`:
 ```sh
 kavilo-tunnel login \
   --token h4ynciplc6gpjjr6422vytufs6bc3onjmkbqkckrzm4whfslrb5q \
-  --endpoint https://tnl.example.com:7777
+  --endpoint https://tnl.example.com:443
 ```
 
 This writes `~/.kavilo-tunnel/config.yml` (mode 0600). You only do this once
 per machine. From now on `kavilo-tunnel tunnel ...` picks up the endpoint
 and token automatically.
+
+> **Picking a port.** The server serves the control plane on **both** the
+> dedicated `:7777` port and the public HTTPS edge port (`:443`). Use `:443`
+> if your network blocks non-standard ports (corporate firewalls, cafes,
+> hotels) — most public networks only allow outbound `:443` and `:80`. Use
+> `:7777` if you want the control plane and edge traffic on separate ports
+> for observability or rate-limiting reasons. Both work identically.
 
 ## Open a tunnel
 
@@ -197,11 +204,13 @@ re-run `kavilo-tunnel login --token …`.
 Network can't reach the control endpoint. Check:
 
 ```sh
-curl -sv https://tnl.example.com:7777 2>&1 | head -5
+curl -sv https://tnl.example.com:443 2>&1 | head -5
 ```
 
-If TLS handshakes, the server's up. If not, server may be down or your
-network is filtering port 7777.
+If TLS handshakes on `:443`, the server's up — re-run `kavilo-tunnel login
+--endpoint https://tnl.example.com:443` to switch to the firewall-friendly
+port. If `:443` itself is blocked, your network is filtering outbound HTTPS
+(rare). If only `:7777` is blocked, `:443` will work as a drop-in.
 
 ### Public URL returns `502 no active tunnel for this hostname`
 

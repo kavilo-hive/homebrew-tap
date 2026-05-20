@@ -393,27 +393,52 @@ jobs:
           tag='${{ env.TAG }}'
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Get runner egress IP
+        id: ip
+        run: echo "ip=$(curl -fsSL https://api.ipify.org)" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login (scoped SP — NSG-only)
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId":       "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret":   "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId":       "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Temporarily allow this runner's IP through the NSG
+        run: |
+          set -euo pipefail
+          az network nsg rule create \
+            --nsg-name "${{ secrets.AZURE_NSG_NAME }}" \
+            --resource-group "${{ secrets.AZURE_NSG_RG }}" \
+            --name "deploy-runner-${{ github.run_id }}" \
+            --priority 305 \
+            --direction Inbound --access Allow --protocol Tcp \
+            --source-address-prefixes "${{ steps.ip.outputs.ip }}" \
+            --destination-port-ranges 22 \
+            --description "Temp deploy rule for run ${{ github.run_id }}" \
+            >/dev/null
+          echo "Opened SSH for runner IP ${{ steps.ip.outputs.ip }}"
+
       - name: Deploy server binary
         env:
           DEPLOY_KEY: ${{ secrets.AZUREGW2_DEPLOY_KEY }}
         run: |
-          set -uo pipefail
-          if [ -z "${DEPLOY_KEY:-}" ]; then
-            echo "::warning::AZUREGW2_DEPLOY_KEY secret not set; skipping server deploy."
-            exit 0
-          fi
+          set -euo pipefail
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-
           chmod +x dist/kavilo-tunneld
 
           SSH_OPTS=(-i ~/.ssh/deploy_key \
                     -o StrictHostKeyChecking=accept-new \
                     -o UserKnownHostsFile=/tmp/known_hosts \
                     -o BatchMode=yes \
-                    -o ConnectTimeout=10)
+                    -o ConnectTimeout=15)
 
           echo "--- scp binary to azuregw2 ---"
           scp "${SSH_OPTS[@]}" dist/kavilo-tunneld \
@@ -422,7 +447,6 @@ jobs:
           echo "--- install + restart on azuregw2 ---"
           ssh "${SSH_OPTS[@]}" azureuser@20.9.149.26 bash <<'REMOTE'
             set -euo pipefail
-            # Keep a backup so quick rollback is one `mv` away.
             if [ -f /usr/local/bin/kavilo-tunneld ]; then
               sudo cp /usr/local/bin/kavilo-tunneld /usr/local/bin/kavilo-tunneld.prev
             fi
@@ -433,6 +457,16 @@ jobs:
             sudo systemctl is-active kavilo-tunneld
             /usr/local/bin/kavilo-tunneld --version
           REMOTE
+
+      - name: Remove temporary NSG rule (always runs)
+        if: always()
+        run: |
+          az network nsg rule delete \
+            --nsg-name "${{ secrets.AZURE_NSG_NAME }}" \
+            --resource-group "${{ secrets.AZURE_NSG_RG }}" \
+            --name "deploy-runner-${{ github.run_id }}" \
+            2>/dev/null || true
+          echo "Cleaned up runner NSG rule"
 
       - name: Smoke-test public URL after deploy
         run: |

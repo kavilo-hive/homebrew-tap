@@ -235,6 +235,72 @@ The client logs to stdout. Increase verbosity with:
 RUST_LOG=debug kavilo-tunnel tunnel --url …
 ```
 
+## Web UI
+
+A web dashboard is mounted at the base host:
+
+```
+https://kavilo-tunnel.weganar.com/
+```
+
+It's **invite-only** and uses **GitHub OAuth** for login (no passwords).
+
+### As a user
+
+Once an admin has sent you an invite URL (looks like
+`https://kavilo-tunnel.weganar.com/invite/abc123...`):
+
+1. Open the invite URL in a browser
+2. Click **Accept & sign in with GitHub**
+3. Authorize the GitHub OAuth app
+4. You land on the dashboard — your account is created automatically
+
+From the dashboard you can:
+
+- See your currently-connected tunnels (live)
+- Mint new API tokens (plaintext shown once — copy it immediately)
+- Revoke tokens
+- Copy the `kavilo-tunnel login` command with your token pre-filled
+
+### As an admin
+
+Log in via `https://kavilo-tunnel.weganar.com/login`, then visit `/admin`
+for:
+
+- Server-wide active tunnel list (`/admin/tunnels`)
+- User list (`/admin/users`)
+- Invite creation + history (`/admin/invites`)
+
+To invite someone:
+
+1. Go to `/admin/invites`
+2. Optionally bind the invite to an email or GitHub username (recommended —
+   prevents the link from being used by someone else)
+3. Optionally check **Grant admin privileges** if they should be an admin
+4. Click **Create invite**
+5. Copy the URL and send it to them out-of-band (Slack, email, etc.)
+
+Invites expire after 7 days and can be used once.
+
+### Server-side setup (operator)
+
+The web UI requires:
+
+- `DATABASE_URL` — Postgres connection (already needed for named tunnels)
+- `KAVILO_GITHUB_CLIENT_ID` + `KAVILO_GITHUB_CLIENT_SECRET` — from a GitHub
+  OAuth App registered at https://github.com/settings/applications/new with
+  the callback URL `https://YOUR-BASE-HOST/auth/github/callback`
+- `KAVILO_SESSION_SECRET` (recommended) — 64 hex chars (32 bytes). If
+  unset, a fresh random one is generated at boot, so sessions don't
+  survive restart. Generate one with `openssl rand -hex 32`.
+
+All three go in `/etc/kavilo-tunneld/env`.
+
+The first user to log in via OAuth using an email that already exists in
+the `users` table will have their existing record linked to GitHub
+automatically (no invite required for pre-existing accounts). New users
+require an invite.
+
 ## Operator: server-side admin
 
 These commands are for whoever runs `kavilo-tunneld` on the VPS. End users

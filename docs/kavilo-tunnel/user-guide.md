@@ -235,6 +235,82 @@ The client logs to stdout. Increase verbosity with:
 RUST_LOG=debug kavilo-tunnel tunnel --url …
 ```
 
+## Operator: server-side admin
+
+These commands are for whoever runs `kavilo-tunneld` on the VPS. End users
+don't need them.
+
+### See currently-active tunnels
+
+The server exposes a JSON endpoint on its loopback metrics port (default
+`127.0.0.1:9090`, no auth — only reachable from the host):
+
+```sh
+ssh <server> 'curl -sS http://127.0.0.1:9090/admin/tunnels | jq .'
+```
+
+Each entry includes the subdomain, public URL, owning user's email, client
+version, peer IP, session UUID, ISO-8601 connect time, and age in seconds.
+
+Handy variants:
+
+```sh
+# Just one line per tunnel
+ssh <server> 'curl -sS http://127.0.0.1:9090/admin/tunnels | \
+  jq -r ".[] | \"\(.subdomain)  \(.user_email)  v\(.client_version)  \(.peer_addr)  age=\(.age_seconds)s\""'
+
+# How many tunnels are connected right now
+ssh <server> 'curl -sS http://127.0.0.1:9090/admin/tunnels | jq length'
+
+# Old clients that haven't upgraded
+ssh <server> 'curl -sS http://127.0.0.1:9090/admin/tunnels | \
+  jq ".[] | select(.client_version != \"0.1.4\")"'
+```
+
+### Prometheus metrics
+
+Same port, different path:
+
+```sh
+ssh <server> 'curl -sS http://127.0.0.1:9090/metrics'
+```
+
+Notable series:
+
+| Metric | Type | What it means |
+|---|---|---|
+| `kavilo_tunnels_active` | gauge | Currently-connected tunnels |
+| `kavilo_tunnels_connected_total` | counter | Lifetime connects (since process start) |
+| `kavilo_edge_requests_total` | counter | Public requests received by the edge |
+| `kavilo_edge_responses_total{code="…"}` | counter | Edge responses by status code |
+| `kavilo_edge_body_limit_exceeded_total` | counter | Requests cancelled for exceeding `--max-request-body-bytes` |
+
+### Issue / revoke tokens
+
+```sh
+# Add a user
+sudo /usr/local/bin/kavilo-tunneld admin create-user --email someone@example.com
+
+# Issue a token (prints plaintext ONCE — save it, paste to the user)
+sudo /usr/local/bin/kavilo-tunneld admin issue-token \
+  --email someone@example.com --name "their-laptop"
+
+# Revoke (delete in DB)
+sudo -u postgres psql -d kavilo -c \
+  "DELETE FROM api_tokens WHERE id = '<token-uuid>';"
+```
+
+### Restart / drain
+
+`SIGTERM` triggers graceful shutdown — the edge stops accepting new
+requests, in-flight ones get a `Cancel`, then gRPC streams close. Connected
+clients reconnect within seconds via their backoff loop, so a restart is
+near-invisible to end users.
+
+```sh
+ssh <server> 'sudo systemctl restart kavilo-tunneld'
+```
+
 ## Command reference
 
 ```text
